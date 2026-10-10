@@ -24,18 +24,21 @@ function format(level: Level, tag: string, msg: string, data?: unknown) {
 }
 
 export function createLogger(tag: string) {
+  // On Windows, writing logs to stdout corrupts the MCP JSON-RPC protocol
+  // because stdin/stdout is the protocol channel. Always log to stderr.
+  const isStderr = process.stderr?.write.bind(process.stderr);
   return {
     debug(msg: string, data?: unknown) {
-      if (shouldLog("debug")) console.log(format("debug", tag, msg, data));
+      if (shouldLog("debug")) isStderr(format("debug", tag, msg, data) + "\n");
     },
     info(msg: string, data?: unknown) {
-      if (shouldLog("info")) console.log(format("info", tag, msg, data));
+      if (shouldLog("info")) isStderr(format("info", tag, msg, data) + "\n");
     },
     warn(msg: string, data?: unknown) {
-      if (shouldLog("warn")) console.warn(format("warn", tag, msg, data));
+      if (shouldLog("warn")) isStderr(format("warn", tag, msg, data) + "\n");
     },
     error(msg: string, data?: unknown) {
-      if (shouldLog("error")) console.error(format("error", tag, msg, data));
+      if (shouldLog("error")) isStderr(format("error", tag, msg, data) + "\n");
     },
   };
 }

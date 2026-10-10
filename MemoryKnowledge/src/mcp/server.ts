@@ -89,8 +89,17 @@ export function createMcpServer(httpOpts: HttpClientOptions): Server {
   return server;
 }
 
-// Start server when run directly
-if (import.meta.url === `file://${process.argv[1]}`) {
+// Start server when run directly (Windows-safe check)
+import { pathToFileURL } from "url";
+const isDirectRun = (() => {
+  try {
+    if (!process.argv[1]) return false;
+    return import.meta.url === pathToFileURL(process.argv[1]).href;
+  } catch {
+    return false;
+  }
+})();
+if (isDirectRun) {
   const baseUrl = process.env.KNOWLEDGE_API_URL || "http://localhost:8421";
   const token = process.env.KNOWLEDGE_API_TOKEN;
 

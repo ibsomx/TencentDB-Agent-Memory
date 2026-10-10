@@ -139,3 +139,14 @@ MemoryCore/scripts/bench-l0-mongo/reports/
 # Local-only: parity snapshots & runtime configs (never commit)
 MemoryProxy/.archive-tmp/
 z_config/
+
+MemoryKnowledge/data/
+dist_backup_antes_llm_local_20261010/
+test_clone/
+test_clone_daemon/
+package.json
+MemoryKnowledge/iniciar_windows.mjs
+MemoryKnowledge/patch.py
+MemoryKnowledge/patch_registry.py
+MemoryKnowledge/configurar_almacenamiento.js
+MemoryKnowledge/REPOSITORIOS_PRIVADOS.md

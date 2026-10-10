@@ -46,7 +46,8 @@ export function injectBasicAuth(
 export function stripCredentials(repoUrl: string): string {
   const url = tryParse(repoUrl);
   if (!url) return repoUrl;
-  url.username = "";
+  // SSH username is an identity (e.g. git), not a password/token.
+  if (url.protocol !== "ssh:") url.username = "";
   url.password = "";
   return url.toString();
 }

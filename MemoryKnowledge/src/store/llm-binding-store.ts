@@ -9,6 +9,7 @@
  *
  * No binding (or disabled/incomplete) → behaviour depends on the global LLM_MODE:
  *   - LLM_MODE=custom → fall back to the global LLM_* (direct BYO) config.
+ *   - LLM_MODE=local  → same, pointing at a local server (Ollama / LM Studio).
  *   - LLM_MODE=proxy (default) → NO silent direct fallback; an "unconfigured"
  *     config is returned so wiki ingest fails loudly (forces the proxy binding
  *     chain to actually be verified instead of masking bugs).
@@ -150,7 +151,7 @@ export function resolveLlmConfig(
 ): LlmConfig {
   // Global default when no per-instance binding is usable.
   const globalDefault = (): LlmConfig =>
-    fallback.mode === "custom"
+    fallback.mode === "custom" || fallback.mode === "local"
       ? fallback
       : { ...fallback, baseUrl: "", apiKey: "" };
 

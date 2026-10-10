@@ -24,9 +24,12 @@ export interface LlmConfig {
    *     ingest fails loudly (see resolveLlmConfig / createLlmClient).
    *   - 'custom': use the global baseUrl/apiKey below to call an OpenAI-compatible
    *     endpoint directly (BYO).
+   *   - 'local': like 'custom' but for a local OpenAI-compatible server (Ollama,
+   *     LM Studio, llama.cpp, vLLM…). No API key required; baseUrl defaults to
+   *     the provider's localhost endpoint (see LOCAL_LLM_DEFAULTS).
    * Per-instance bindings always override this default.
    */
-  mode: "proxy" | "custom";
+  mode: "proxy" | "custom" | "local";
   /** LLM 协议：openai 走 /chat/completions，anthropic 走 /messages。默认 openai（向后兼容）。 */
   protocol: "openai" | "anthropic";
   provider: string;
@@ -83,6 +86,43 @@ export interface ServiceConfig {
   tmcCallbackUrl: string;
   /** Optional ClickHouse request telemetry. Disabled by default. */
   clickhouse: ClickHouseTelemetryConfig;
+}
+
+/**
+ * Defaults for LLM_MODE=local, keyed by LLM_PROVIDER.
+ * Local servers ignore the API key, but the OpenAI SDK requires a non-empty
+ * value, so a placeholder is sent when LLM_API_KEY is empty.
+ */
+export const LOCAL_LLM_DEFAULTS: Record<string, { baseUrl: string; model: string }> = {
+  ollama: { baseUrl: "http://localhost:11434/v1", model: "qwen2.5:7b" },
+  lmstudio: { baseUrl: "http://localhost:1234/v1", model: "local-model" },
+};
+export const LOCAL_LLM_PLACEHOLDER_KEY = "local-no-key";
+
+function parseLlmMode(raw: string): LlmConfig["mode"] {
+  const v = raw.toLowerCase();
+  return v === "custom" || v === "local" ? v : "proxy";
+}
+
+/** Build the global LLM config from env (handles LLM_MODE=local defaults). */
+export function loadLlmConfig(): LlmConfig {
+  const mode = parseLlmMode(env("LLM_MODE", "proxy"));
+  const isLocal = mode === "local";
+  const provider = env("LLM_PROVIDER", isLocal ? "ollama" : "custom").toLowerCase();
+  const local = LOCAL_LLM_DEFAULTS[provider] ?? LOCAL_LLM_DEFAULTS.ollama;
+  return {
+    mode,
+    // Local servers speak the OpenAI /chat/completions protocol.
+    protocol: !isLocal && env("LLM_PROTOCOL", "openai") === "anthropic" ? "anthropic" : "openai",
+    provider,
+    apiKey: env("LLM_API_KEY", isLocal ? LOCAL_LLM_PLACEHOLDER_KEY : ""),
+    model: env("LLM_MODEL", isLocal ? local.model : "Memory-Model"),
+    baseUrl: env("LLM_BASE_URL", isLocal ? local.baseUrl : ""),
+    // Local models usually have small context windows; keep output budget modest.
+    maxTokens: envInt("LLM_MAX_TOKENS", isLocal ? 8192 : 32768),
+    timeoutMs: envInt("LLM_TIMEOUT_MS", 1200000),
+    stream: process.env.LLM_STREAM === "true",
+  };
 }
 
 function env(key: string, fallback: string): string {
@@ -171,16 +211,6 @@ export function loadConfig(): ServiceConfig {
     publicBaseUrl: env("KNOWLEDGE_PUBLIC_BASE_URL", ""),
     tmcCallbackUrl: env("TMC_CALLBACK_URL", ""),
     clickhouse,
-    llm: {
-      mode: env("LLM_MODE", "proxy") === "custom" ? "custom" : "proxy",
-      protocol: env("LLM_PROTOCOL", "openai") === "anthropic" ? "anthropic" : "openai",
-      provider: env("LLM_PROVIDER", "custom"),
-      apiKey: env("LLM_API_KEY", ""),
-      model: env("LLM_MODEL", "Memory-Model"),
-      baseUrl: env("LLM_BASE_URL", ""),
-      maxTokens: envInt("LLM_MAX_TOKENS", 32768),
-      timeoutMs: envInt("LLM_TIMEOUT_MS", 1200000),
-      stream: process.env.LLM_STREAM === "true",
-    },
+    llm: loadLlmConfig(),
   };
 }

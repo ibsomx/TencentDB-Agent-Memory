@@ -96,18 +96,33 @@ export interface LlmClient {
 /**
  * 基于 AI SDK 的真实客户端。纯文本输出（不挂任何 tool，避免弱模型幻觉 tool call）。
  */
+/** True when baseUrl points at this machine (Ollama, LM Studio, llama.cpp…). */
+export function isLocalEndpoint(baseUrl: string): boolean {
+  try {
+    const host = new URL(baseUrl).hostname.replace(/^\[|\]$/g, "");
+    return host === "localhost" || host === "::1" || host.startsWith("127.") || host === "0.0.0.0" ||
+      host === "host.docker.internal";
+  } catch {
+    return false;
+  }
+}
+
 export function createLlmClient(raw: RawLlmConfig | undefined): LlmClient {
   const config = normalizeLlmConfig(raw);
+  // Local servers don't check keys, but the SDK needs a non-empty one.
+  if (!config.apiKey && config.baseUrl && isLocalEndpoint(config.baseUrl)) {
+    config.apiKey = "local-no-key";
+  }
   if (!config.apiKey) {
     throw new Error(
       "LLM apiKey 未配置：proxy 模式需 TMC 为该 service_id 推送 llm_binding；" +
-      "或设 LLM_MODE=custom + LLM_API_KEY 走自带端点",
+      "或设 LLM_MODE=custom + LLM_API_KEY 走自带端点；或 LLM_MODE=local 用本地模型 (Ollama/LM Studio)",
     );
   }
   if (!config.baseUrl) {
     throw new Error(
       "LLM baseUrl 未配置：proxy 模式需 TMC 为该 service_id 推送 llm_binding；" +
-      "或设 LLM_MODE=custom + LLM_BASE_URL 走自带端点",
+      "或设 LLM_MODE=custom + LLM_BASE_URL 走自带端点；或 LLM_MODE=local 用本地模型 (Ollama/LM Studio)",
     );
   }
 

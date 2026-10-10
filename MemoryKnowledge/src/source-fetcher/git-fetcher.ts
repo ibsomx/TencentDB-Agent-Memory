@@ -11,6 +11,9 @@
  */
 
 import simpleGit, { CleanOptions, ResetMode } from "simple-git";
+import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, isAbsolute } from "node:path";
 import type { ISourceFetcher, FetchResult, SourceType } from "./types.js";
 
 /**
@@ -81,77 +84,112 @@ export interface GitSourceFetcherOptions {
   ssrfCheck?: boolean;
 }
 
+
+function quote(value: string): string {
+  if (/[\r\n\0]/.test(value)) throw new Error("Invalid credential path");
+  return "'" + value.replace(/'/g, "'\\''") + "'";
+}
+
+export function normalizeGitUrl(value: string): URL {
+  if (!value || /[\s\x00-\x1f\x7f]/.test(value)) throw new Error("Invalid Git URL");
+  const scp = /^([A-Za-z0-9_][A-Za-z0-9_.-]*)@([A-Za-z0-9.-]+):([^?#]+)$/.exec(value);
+  let url: URL;
+  try { url = new URL(scp ? `ssh://${scp[1]}@${scp[2]}/${scp[3]}` : value); }
+  catch { throw new Error("Invalid Git URL"); }
+  if (!["https:", "ssh:"].includes(url.protocol)) throw new Error("Git URL must use HTTPS or SSH");
+  if (!url.hostname || url.hostname.startsWith("-") || url.search || url.hash || url.pathname === "/") throw new Error("Repository path required; query/fragment forbidden");
+  if (url.password || (url.protocol === "https:" && url.username)) throw new Error("Use environment credentials, not URL credentials");
+  if (url.username && !/^[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(url.username)) throw new Error("Invalid SSH username");
+  try { if (/[\x00-\x1f\x7f]/.test(decodeURIComponent(url.pathname))) throw new Error(); }
+  catch { throw new Error("Invalid repository path"); }
+  return url;
+}
+
+function privateHost(host: string): boolean {
+  const h = host.replace(/^\[|\]$/g, "").replace(/\.$/, "").toLowerCase();
+  if (PRIVATE_ADDR_RE.test(h) || h === "::" || h.endsWith(".localhost") || (/^(fc|fd|fe[89ab])/.test(h) && h.includes(":"))) return true;
+  const mapped = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(h);
+  if (!mapped) return false;
+  const n = parseInt(mapped[1], 16) * 65536 + parseInt(mapped[2], 16);
+  return privateHost([n >>> 24, (n >>> 16) & 255, (n >>> 8) & 255, n & 255].join("."));
+}
+
 export class GitSourceFetcher implements ISourceFetcher {
   readonly supportedType: SourceType = "git";
-
-  /** SSRF 私网黑名单校验开关（https-only 协议校验始终生效，不受此开关影响）。 */
   private readonly ssrfCheck: boolean;
-
   constructor(opts?: GitSourceFetcherOptions) {
     this.ssrfCheck = opts?.ssrfCheck ?? ssrfCheckEnabledFromEnv();
   }
-
   validate(sourceUrl: string): void {
-    // 第一版：仅支持 public HTTPS 仓库（SSH / 私有仓库鉴权见文档 005）。
-    if (!sourceUrl.startsWith("https://")) {
-      throw new Error(
-        "first version only supports public HTTPS repos; SSH/private repo support coming soon",
-      );
+    const url = normalizeGitUrl(sourceUrl);
+    if (this.ssrfCheck && privateHost(url.hostname)) throw new Error("Private/loopback Git host blocked");
+  }
+  private branch(branch: string): void {
+    if (!branch || branch.startsWith("-") || /[\s\x00-\x1f~^:?*\[]/.test(branch) || branch.includes(String.fromCharCode(92)) || branch.includes("..") || branch.includes("@{")) throw new Error("Invalid Git branch");
+  }
+  private async authenticated<T>(sourceUrl: string, baseDir: string | undefined, action: (git: ReturnType<typeof simpleGit>, url: string) => Promise<T>): Promise<T> {
+    this.validate(sourceUrl);
+    const url = normalizeGitUrl(sourceUrl);
+    const env: Record<string, string | undefined> = { ...process.env, GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "Never" };
+    for (const k of Object.keys(env)) if (k.startsWith("GIT_TRACE") || k === "GIT_CURL_VERBOSE") delete env[k];
+    const pat = process.env.KNOWLEDGE_GIT_PAT;
+    const key = process.env.KNOWLEDGE_GIT_SSH_KEY_PATH;
+    if (url.protocol === "https:" ? !!pat : !!key) {
+      const hosts = (process.env.KNOWLEDGE_GIT_AUTH_HOSTS ?? "").split(",").map(h => h.trim().toLowerCase());
+      if (!hosts.includes(url.host.toLowerCase())) throw new Error("Set KNOWLEDGE_GIT_AUTH_HOSTS for the credential destination");
     }
-    const host = this.extractHost(sourceUrl);
-    if (!host) {
-      throw new Error(`invalid repo_url: cannot parse host from ${sourceUrl}`);
-    }
-    // R2: SSRF 防护 —— 禁止指向内网 / 环回地址（可经 KNOWLEDGE_SSRF_CHECK=off 关闭）。
-    if (this.ssrfCheck && this.isPrivateAddress(host)) {
-      throw new Error(`repo_url must not point to private/loopback address: ${host}`);
+    let temp: string | undefined;
+    try {
+      if (url.protocol === "https:" && pat) {
+        if (/[\r\n\0]/.test(pat) || /[\r\n\0]/.test(process.env.KNOWLEDGE_GIT_USERNAME ?? "")) throw new Error("Invalid credential format");
+        temp = await mkdtemp(join(tmpdir(), "knowledge-git-auth-"));
+        const helper = join(temp, "askpass.cjs");
+        await writeFile(helper, `const p=process.argv[2]||"";\nif(/^Username/i.test(p))process.stdout.write(process.env.KNOWLEDGE_GIT_USERNAME||"oauth2");\nelse if(/^Password/i.test(p))process.stdout.write(process.env.KNOWLEDGE_GIT_PAT||"");\nelse process.exit(1);\n`, { mode: 0o600 });
+        const launcher = join(temp, "askpass.sh");
+        await writeFile(launcher, `#!/bin/sh\nexec ${quote(process.execPath.replace(/\\/g, "/"))} ${quote(helper.replace(/\\/g, "/"))} "$@"\n`, { mode: 0o700 });
+        env.GIT_ASKPASS = quote(launcher.replace(/\\/g, "/"));
+      } else if (url.protocol === "ssh:") {
+        let ssh = "ssh -o BatchMode=yes -o StrictHostKeyChecking=yes";
+        if (key) {
+          if (!isAbsolute(key)) throw new Error("SSH key path must be absolute");
+          ssh += ` -o IdentitiesOnly=yes -i ${quote(key.replace(/\\/g, "/"))}`;
+        }
+        const known = process.env.KNOWLEDGE_GIT_SSH_KNOWN_HOSTS_PATH;
+        if (known) {
+          if (!isAbsolute(known)) throw new Error("known_hosts path must be absolute");
+          ssh += ` -o UserKnownHostsFile=${quote(known.replace(/\\/g, "/"))}`;
+        }
+        env.GIT_SSH_COMMAND = ssh;
+        env.GIT_SSH_VARIANT = "ssh";
+        delete env.GIT_ASKPASS;
+        delete env.KNOWLEDGE_GIT_PAT;
+      }
+      const git = simpleGit({ baseDir, config: ["credential.helper=", "http.followRedirects=false", "protocol.file.allow=never", "protocol.ext.allow=never"] }).env(env);
+      try { return await action(git, url.toString()); }
+      catch { throw new Error("Git clone/sync failed: verify credentials, repository permissions, branch and trusted SSH host keys"); }
+    } finally {
+      if (temp) await rm(temp, { recursive: true, force: true });
     }
   }
-
   async fetch(sourceUrl: string, branch: string, localPath: string): Promise<FetchResult> {
-    this.validate(sourceUrl);
-    // 浅克隆单分支。注：git clone/fetch 不会拉取远端的 .git/hooks（hooks 是本地态），
-    // 所以正常仓库 clone 出来不带可执行钩子；此处不再配置 core.hooksPath
-    // （加固版 git 会拒绝该配置：需 allowUnsafeHooksPath）。
-    await simpleGit().clone(sourceUrl, localPath, {
-      "--depth": 1,
-      "--branch": branch,
+    this.branch(branch);
+    return this.authenticated(sourceUrl, undefined, async (git, url) => {
+      await git.clone(url, localPath, { "--depth": 1, "--branch": branch });
+      return { localPath, version: await this.headCommit(localPath), sourceType: "git" };
     });
-    const version = await this.headCommit(localPath);
-    return { localPath, version, sourceType: "git" };
   }
-
   async sync(sourceUrl: string, branch: string, localPath: string): Promise<FetchResult> {
-    this.validate(sourceUrl);
-    const git = simpleGit(localPath);
-    await git.fetch("origin", branch, { "--depth": 1 });
-    await git.reset(ResetMode.HARD, [`origin/${branch}`]);
-    // Bug 修复（方案 A）：clean 排除 .codegraph/，否则会删掉 codegraph 的索引库，
-    // 导致增量 sync 永远失败、每次回退到全量 clone。
-    await git.clean(CleanOptions.FORCE + CleanOptions.RECURSIVE, ["-e", ".codegraph"]);
-    const version = await this.headCommit(localPath);
-    return { localPath, version, sourceType: "git" };
+    this.branch(branch);
+    return this.authenticated(sourceUrl, localPath, async (git, url) => {
+      await git.remote(["set-url", "origin", url]);
+      await git.fetch(url, `+refs/heads/${branch}:refs/remotes/origin/${branch}`, { "--depth": 1 });
+      await git.reset(ResetMode.HARD, [`refs/remotes/origin/${branch}`]);
+      await git.clean(CleanOptions.FORCE + CleanOptions.RECURSIVE, ["-e", ".codegraph"]);
+      return { localPath, version: await this.headCommit(localPath), sourceType: "git" };
+    });
   }
-
-  // ── 内部 helper ──
-
   private async headCommit(localPath: string): Promise<string | null> {
-    try {
-      return (await simpleGit(localPath).revparse(["HEAD"])).trim().slice(0, 12);
-    } catch {
-      return null;
-    }
-  }
-
-  private extractHost(url: string): string {
-    try {
-      return new URL(url).hostname;
-    } catch {
-      return "";
-    }
-  }
-
-  private isPrivateAddress(host: string): boolean {
-    return PRIVATE_ADDR_RE.test(host);
+    try { return (await simpleGit(localPath).revparse(["HEAD"])).trim().slice(0, 12); }
+    catch { return null; }
   }
 }
