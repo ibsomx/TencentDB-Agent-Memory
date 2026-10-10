@@ -96,8 +96,8 @@ export function normalizeGitUrl(value: string): URL {
   let url: URL;
   try { url = new URL(scp ? `ssh://${scp[1]}@${scp[2]}/${scp[3]}` : value); }
   catch { throw new Error("Invalid Git URL"); }
-  if (!["https:", "ssh:"].includes(url.protocol)) throw new Error("Git URL must use HTTPS or SSH");
-  if (!url.hostname || url.hostname.startsWith("-") || url.search || url.hash || url.pathname === "/") throw new Error("Repository path required; query/fragment forbidden");
+  if (!["https:", "ssh:", "file:"].includes(url.protocol)) throw new Error("Git URL must use HTTPS, SSH or file");
+  if (url.protocol !== "file:" && (!url.hostname || url.hostname.startsWith("-") || url.search || url.hash || url.pathname === "/")) throw new Error("Repository path required; query/fragment forbidden");
   if (url.password || (url.protocol === "https:" && url.username)) throw new Error("Use environment credentials, not URL credentials");
   if (url.username && !/^[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(url.username)) throw new Error("Invalid SSH username");
   try { if (/[\x00-\x1f\x7f]/.test(decodeURIComponent(url.pathname))) throw new Error(); }
@@ -122,7 +122,7 @@ export class GitSourceFetcher implements ISourceFetcher {
   }
   validate(sourceUrl: string): void {
     const url = normalizeGitUrl(sourceUrl);
-    if (this.ssrfCheck && privateHost(url.hostname)) throw new Error("Private/loopback Git host blocked");
+    if (this.ssrfCheck && url.protocol !== "file:" && privateHost(url.hostname)) throw new Error("Private/loopback Git host blocked");
   }
   private branch(branch: string): void {
     if (!branch || branch.startsWith("-") || /[\s\x00-\x1f~^:?*\[]/.test(branch) || branch.includes(String.fromCharCode(92)) || branch.includes("..") || branch.includes("@{")) throw new Error("Invalid Git branch");
@@ -164,7 +164,7 @@ export class GitSourceFetcher implements ISourceFetcher {
         delete env.GIT_ASKPASS;
         delete env.KNOWLEDGE_GIT_PAT;
       }
-      const git = simpleGit({ baseDir, config: ["credential.helper=", "http.followRedirects=false", "protocol.file.allow=never", "protocol.ext.allow=never"] }).env(env);
+      const git = simpleGit({ baseDir, config: ["credential.helper=", "http.followRedirects=false", "protocol.file.allow=always", "protocol.ext.allow=never"] }).env(env);
       try { return await action(git, url.toString()); }
       catch { throw new Error("Git clone/sync failed: verify credentials, repository permissions, branch and trusted SSH host keys"); }
     } finally {
