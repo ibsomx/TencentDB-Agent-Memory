@@ -12,7 +12,7 @@
  *   lib 层 cascadeDeleteWikiPagesWithRefs 做引用级联。
  */
 
-import { join, resolve, normalize, dirname } from "node:path";
+import { join, resolve, normalize, dirname, sep } from "node:path";
 import {
   rmSync,
   mkdirSync,
@@ -1137,7 +1137,7 @@ export class WikiService {
     // （如 KNOWLEDGE_DATA_DIR=./data）与 resolve 出来的绝对路径比较失败。
     const base = resolve(sourcesDir);
     const safe = resolve(base, normalized);
-    const dirWithSep = base.endsWith("/") ? base : base + "/";
+    const dirWithSep = base.endsWith(sep) ? base : base + sep;
     if (safe !== base && !safe.startsWith(dirWithSep)) return null;
     return safe;
   }
@@ -1158,7 +1158,7 @@ export class WikiService {
 
     // resolve 成绝对路径，避免 projectPath 是相对路径时比较失败。
     const wikiDir = resolve(projectPath, "wiki");
-    const wikiDirSep = wikiDir.endsWith("/") ? wikiDir : wikiDir + "/";
+    const wikiDirSep = wikiDir.endsWith(sep) ? wikiDir : wikiDir + sep;
 
     // 先按原样尝试，再尝试补 .md 扩展。
     const candidates = cleanRef.endsWith(".md") ? [cleanRef] : [cleanRef + ".md", cleanRef];
