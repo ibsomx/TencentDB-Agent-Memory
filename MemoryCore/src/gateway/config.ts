@@ -12,6 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 import YAML from "yaml";
 import { getEnv } from "../utils/env.js";
+import { localLlmDefaults } from "../utils/local-llm-config.js";
 import { parseConfig as parseMemoryConfig } from "../config.js";
 import type { MemoryTdaiConfig } from "../config.js";
 import type { StandaloneLLMConfig } from "../adapters/standalone/llm-runner.js";
@@ -638,13 +639,20 @@ export function loadGatewayConfig(overrides?: GatewayConfigOverrides): GatewayCo
   //             见 src/gateway/llm-resolver.ts 的 resolveEffectiveLlmConfig。
   const llmConfig = obj(fileConfig, "llm");
   const llmProxyConfig = obj(llmConfig, "proxy");
+  const localLlm = localLlmDefaults({
+    mode: env("TDAI_LLM_MODE") ?? str(llmConfig, "mode"),
+    provider: env("TDAI_LLM_LOCAL_PROVIDER") ?? str(llmConfig, "localProvider"),
+    baseUrl: env("TDAI_LLM_BASE_URL") ?? str(llmConfig, "baseUrl"),
+    apiKey: env("TDAI_LLM_API_KEY") ?? str(llmConfig, "apiKey"),
+    model: env("TDAI_LLM_MODEL") ?? str(llmConfig, "model"),
+  });
   const rawLlmProvider = env("TDAI_LLM_PROVIDER") ?? str(llmConfig, "provider");
   const llmProvider: "openai" | "proxy" =
-    rawLlmProvider === "proxy" ? "proxy" : "openai";
+    !localLlm && rawLlmProvider === "proxy" ? "proxy" : "openai";
   const llm: StandaloneLLMConfig = {
-    baseUrl: env("TDAI_LLM_BASE_URL") ?? str(llmConfig, "baseUrl") ?? "https://api.openai.com/v1",
-    apiKey: env("TDAI_LLM_API_KEY") ?? str(llmConfig, "apiKey") ?? "",
-    model: env("TDAI_LLM_MODEL") ?? str(llmConfig, "model") ?? "gpt-4o",
+    baseUrl: localLlm?.baseUrl ?? env("TDAI_LLM_BASE_URL") ?? str(llmConfig, "baseUrl") ?? "https://api.openai.com/v1",
+    apiKey: localLlm?.apiKey ?? env("TDAI_LLM_API_KEY") ?? str(llmConfig, "apiKey") ?? "",
+    model: localLlm?.model ?? env("TDAI_LLM_MODEL") ?? str(llmConfig, "model") ?? "gpt-4o",
     maxTokens: envInt("TDAI_LLM_MAX_TOKENS") ?? num(llmConfig, "maxTokens") ?? 4096,
     timeoutMs: envInt("TDAI_LLM_TIMEOUT_MS") ?? num(llmConfig, "timeoutMs") ?? 120_000,
     provider: llmProvider,

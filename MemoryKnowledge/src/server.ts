@@ -16,6 +16,7 @@ import { swaggerUI } from "@hono/swagger-ui";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { isIP } from "node:net";
 
 import { loadConfig } from "./config.js";
 import { createDb } from "./db/client.js";
@@ -41,8 +42,19 @@ import { createAnalyticsRoutes } from "./analytics-routes.js";
 
 const log = createLogger("server");
 
+/** Only literal loopback addresses may be used without a service key. */
+export function resolveKnowledgeHost(serviceKey: string): string {
+  const host = process.env.HOST?.trim() || "127.0.0.1";
+  const loopback = host === "::1" || (isIP(host) === 4 && host.startsWith("127."));
+  if (!loopback && !serviceKey.trim()) {
+    throw new Error("Inicio rechazado: HOST fuera de loopback requiere KNOWLEDGE_SERVICE_KEY no vacía. Use HOST=127.0.0.1 para escritorio o configure una clave aleatoria para acceso compartido.");
+  }
+  return host;
+}
+
 export function createApp() {
   const config = loadConfig();
+  const hostname = resolveKnowledgeHost(config.auth.serviceKey);
   const knowledgeTelemetry = createKnowledgeTelemetry(config.clickhouse);
 
   // Initialize DB + knowledge module
@@ -141,11 +153,11 @@ export function createApp() {
     log.warn("OpenAPI spec not found at openapi.yaml, skipping Swagger UI");
   }
 
-  return { app, config, knowledgeModule, knowledgeTelemetry };
+  return { app, config, hostname, knowledgeModule, knowledgeTelemetry };
 }
 
 async function startServer(): Promise<void> {
-  const { app, config, knowledgeTelemetry } = createApp();
+  const { app, config, hostname, knowledgeTelemetry } = createApp();
   await knowledgeTelemetry.initialize();
 
   log.info(`Starting knowledge service on port ${config.port}`);
@@ -153,7 +165,7 @@ async function startServer(): Promise<void> {
   log.info(`DB path: ${config.dbPath}`);
   log.info(`API prefix: ${config.apiPrefix}`);
   log.info(`ClickHouse telemetry: ${config.clickhouse.enabled ? "enabled" : "disabled"}`);
-  // Security posture：空 key 只 warn 不拒启（向后兼容），与 Core gateway 的默认开放语义一致。
+  // Missing keys are allowed only on literal loopback, checked before DB initialization.
   if (config.auth.serviceKey) {
     log.info("Service auth: enabled (KNOWLEDGE_SERVICE_KEY) — write/admin endpoints require Bearer");
   } else {
@@ -163,8 +175,8 @@ async function startServer(): Promise<void> {
     );
   }
 
-  const server = serve({ fetch: app.fetch, port: config.port, hostname: "127.0.0.1" }, (info) => {
-    log.info(`Knowledge service listening on http://localhost:${info.port}`);
+  const server = serve({ fetch: app.fetch, port: config.port, hostname }, (info) => {
+    log.info(`Knowledge service listening on ${hostname}:${info.port}`);
   });
 
   let shuttingDown = false;

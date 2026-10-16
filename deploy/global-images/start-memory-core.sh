@@ -141,6 +141,8 @@ data:
   baseDir: /data/tdai-memory
 
 llm:
+  mode: "${MEMORY_LLM_MODE:-custom}"
+  localProvider: "${MEMORY_LLM_PROVIDER:-ollama}"
   baseUrl: "${MEMORY_LLM_BASE_URL:-}"
   apiKey: "${MEMORY_LLM_API_KEY:-}"
   model: "${MEMORY_LLM_MODEL:-}"

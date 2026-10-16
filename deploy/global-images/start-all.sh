@@ -28,7 +28,16 @@ fi
 load_env
 
 # 交互式确认 LLM 两组配置 + 通路检查 + 写回 .env
-interactive_llm_setup
+if [[ "${MEMORY_LLM_MODE:-custom}" == local && "${PROXY_LLM_MODE:-custom}" == local ]]; then
+  info "Local LLM mode: no paid API key required; endpoints/models still need to be available."
+  # This check runs on the host; container configs keep host.docker.internal.
+  check_llm_group "memory local" "${MEMORY_LLM_BASE_URL/http:\/\/host.docker.internal:/http:\/\/localhost:}" "$MEMORY_LLM_API_KEY" "$MEMORY_LLM_MODEL" openai || die "Memory local LLM check failed"
+  check_llm_group "proxy local Messages" "${PROXY_UPSTREAM_URL/http:\/\/host.docker.internal:/http:\/\/localhost:}" "$PROXY_UPSTREAM_API_KEY" "$PROXY_UPSTREAM_MODEL" anthropic || die "Proxy local Messages check failed"
+elif [[ "${MEMORY_LLM_MODE:-custom}" == local || "${PROXY_LLM_MODE:-custom}" == local ]]; then
+  die "Mixed local/custom mode: use the individual start scripts with explicit configuration."
+else
+  interactive_llm_setup
+fi
 
 # 一次性校验全部必填参数，避免拉起 memory 之后才发现 proxy 参数缺
 require_vars \

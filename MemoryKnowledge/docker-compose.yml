@@ -16,10 +16,12 @@ services:
     build: .
     image: ${TEAM_KNOWLEDGE_IMAGE:-team-knowledge:latest}
     ports:
-      - "${TEAM_KNOWLEDGE_HOST_PORT:-8421}:8421"
+      - "127.0.0.1:${TEAM_KNOWLEDGE_HOST_PORT:-8421}:8421"
     volumes:
       - knowledge-data:/app/data
     environment:
+      HOST: "0.0.0.0"
+      KNOWLEDGE_SERVICE_KEY: ${KNOWLEDGE_SERVICE_KEY:?set a nonblank KNOWLEDGE_SERVICE_KEY before starting Docker}
       KNOWLEDGE_CLICKHOUSE_ENABLED: ${KNOWLEDGE_CLICKHOUSE_ENABLED:-false}
       KNOWLEDGE_CLICKHOUSE_URL: ${KNOWLEDGE_CLICKHOUSE_URL:-}
       KNOWLEDGE_CLICKHOUSE_DATABASE: ${KNOWLEDGE_CLICKHOUSE_DATABASE:-default}

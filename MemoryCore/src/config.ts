@@ -7,6 +7,8 @@
  * Minimal config (zero config): {} — all fields have sensible defaults.
  */
 
+import { localLlmDefaults } from "./utils/local-llm-config.js";
+
 // ============================
 // Type definitions
 // ============================
@@ -641,14 +643,21 @@ export function parseConfig(raw: Record<string, unknown> | undefined): MemoryTda
     llm: (() => {
       const llmGroup = obj(c, "llm");
       const rawProvider = str(llmGroup, "provider");
+      const localLlm = localLlmDefaults({
+        mode: str(llmGroup, "mode"),
+        provider: str(llmGroup, "localProvider"),
+        baseUrl: str(llmGroup, "baseUrl"),
+        apiKey: str(llmGroup, "apiKey"),
+        model: str(llmGroup, "model"),
+      });
       const provider: "openai" | "proxy" =
-        rawProvider === "proxy" ? "proxy" : "openai";
+        !localLlm && rawProvider === "proxy" ? "proxy" : "openai";
       const proxyGroup = obj(llmGroup, "proxy");
       return {
         enabled: bool(llmGroup, "enabled") ?? false,
-        baseUrl: str(llmGroup, "baseUrl") ?? "https://api.openai.com/v1",
-        apiKey: str(llmGroup, "apiKey") ?? "",
-        model: str(llmGroup, "model") ?? "gpt-4o",
+        baseUrl: localLlm?.baseUrl ?? str(llmGroup, "baseUrl") ?? "https://api.openai.com/v1",
+        apiKey: localLlm?.apiKey ?? str(llmGroup, "apiKey") ?? "",
+        model: localLlm?.model ?? str(llmGroup, "model") ?? "gpt-4o",
         maxTokens: num(llmGroup, "maxTokens") ?? 4096,
         timeoutMs: num(llmGroup, "timeoutMs") ?? 120_000,
         provider,

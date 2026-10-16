@@ -272,6 +272,22 @@ function parseUpstreamAgents(
 export function buildConfig(overrides: CliOverrides = {}): ProxyConfig {
   const configPath = overrides.configFile || "config.yaml";
   const yaml = loadYamlConfig(configPath);
+  // Explicit local mode only: preserve all remote/auth/per-agent behavior otherwise.
+  const localMode = process.env.PROXY_LLM_MODE?.trim().toLowerCase() === "local";
+  const localProvider = process.env.PROXY_LLM_PROVIDER?.trim().toLowerCase() || "ollama";
+  if (localMode && localProvider !== "ollama" && localProvider !== "lmstudio") {
+    throw new Error("PROXY_LLM_PROVIDER must be ollama or lmstudio in local mode");
+  }
+  const localValue = (value: string | undefined, fallback: string): string =>
+    value?.trim() && value.trim() !== "REPLACE_ME" ? value.trim() : fallback;
+  // Local Proxy targets Anthropic Messages, whose route appends /v1/messages.
+  // Core/Knowledge have independent OpenAI-compatible /v1 settings.
+  const localUpstreamUrl = localMode ? localValue(
+    overrides.upstreamUrl ?? process.env.PROXY_UPSTREAM_URL ?? yaml.upstream?.url,
+    localProvider === "ollama" ? "http://localhost:11434" : "http://localhost:1234",
+  ).replace(/\/v1\/?$/, "") : undefined;
+  const costGuard = parseCostGuard(yaml);
+  if (localUpstreamUrl) costGuard.anthropicUpstream = { url: localUpstreamUrl };
 
   return {
     server: {
@@ -283,10 +299,10 @@ export function buildConfig(overrides: CliOverrides = {}): ProxyConfig {
     },
     upstream: {
       url:
-        overrides.upstreamUrl ??
-        yaml.upstream?.url ??
+        localUpstreamUrl ?? overrides.upstreamUrl ?? yaml.upstream?.url ??
         DEFAULT_CONFIG.upstream.url,
-      apiKey: yaml.upstream?.apiKey ?? DEFAULT_CONFIG.upstream.apiKey,
+      apiKey: localMode ? localValue(process.env.PROXY_UPSTREAM_API_KEY ?? yaml.upstream?.apiKey,
+        localProvider) : yaml.upstream?.apiKey ?? DEFAULT_CONFIG.upstream.apiKey,
       agents: parseUpstreamAgents(yaml.upstream?.agents),
     },
     log: {
@@ -370,7 +386,7 @@ export function buildConfig(overrides: CliOverrides = {}): ProxyConfig {
       sqlite: { dbPath: yaml.storage?.sqlite?.dbPath ?? DEFAULT_CONFIG.storage.sqlite.dbPath },
       fs: { fsRoot: yaml.storage?.fs?.fsRoot ?? DEFAULT_CONFIG.storage.fs.fsRoot },
     },
-    costGuard: parseCostGuard(yaml),
+    costGuard,
     creditReport: {
       url: yaml.creditReport?.url ?? DEFAULT_CONFIG.creditReport.url,
       timeoutMs: yaml.creditReport?.timeoutMs ?? DEFAULT_CONFIG.creditReport.timeoutMs,

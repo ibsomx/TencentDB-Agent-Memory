@@ -15,6 +15,7 @@ import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, isAbsolute } from "node:path";
 import type { ISourceFetcher, FetchResult, SourceType } from "./types.js";
+import { LocalSourceFetcher } from "./local-fetcher.js";
 
 /**
  * 识别 git 认证 / 权限类错误（simple-git 无 TTY，git 交互式询问 Username/Password
@@ -122,6 +123,10 @@ export class GitSourceFetcher implements ISourceFetcher {
   }
   validate(sourceUrl: string): void {
     const url = normalizeGitUrl(sourceUrl);
+    if (url.protocol === "file:") {
+      new LocalSourceFetcher().validate(sourceUrl);
+      return;
+    }
     if (this.ssrfCheck && url.protocol !== "file:" && privateHost(url.hostname)) throw new Error("Private/loopback Git host blocked");
   }
   private branch(branch: string): void {
@@ -164,7 +169,7 @@ export class GitSourceFetcher implements ISourceFetcher {
         delete env.GIT_ASKPASS;
         delete env.KNOWLEDGE_GIT_PAT;
       }
-      const git = simpleGit({ baseDir, config: ["credential.helper=", "http.followRedirects=false", "protocol.file.allow=always", "protocol.ext.allow=never"] }).env(env);
+      const git = simpleGit({ baseDir, config: ["credential.helper=", "http.followRedirects=false", "protocol.file.allow=never", "protocol.ext.allow=never"] }).env(env);
       try { return await action(git, url.toString()); }
       catch { throw new Error("Git clone/sync failed: verify credentials, repository permissions, branch and trusted SSH host keys"); }
     } finally {
@@ -173,6 +178,10 @@ export class GitSourceFetcher implements ISourceFetcher {
   }
   async fetch(sourceUrl: string, branch: string, localPath: string): Promise<FetchResult> {
     this.branch(branch);
+    if (normalizeGitUrl(sourceUrl).protocol === "file:") {
+      const result = await new LocalSourceFetcher().fetch(sourceUrl, branch, localPath);
+      return { ...result, sourceType: "git" };
+    }
     return this.authenticated(sourceUrl, undefined, async (git, url) => {
       await git.clone(url, localPath, { "--depth": 1, "--branch": branch });
       return { localPath, version: await this.headCommit(localPath), sourceType: "git" };
@@ -180,6 +189,10 @@ export class GitSourceFetcher implements ISourceFetcher {
   }
   async sync(sourceUrl: string, branch: string, localPath: string): Promise<FetchResult> {
     this.branch(branch);
+    if (normalizeGitUrl(sourceUrl).protocol === "file:") {
+      const result = await new LocalSourceFetcher().sync(sourceUrl, branch, localPath);
+      return { ...result, sourceType: "git" };
+    }
     return this.authenticated(sourceUrl, localPath, async (git, url) => {
       await git.remote(["set-url", "origin", url]);
       await git.fetch(url, `+refs/heads/${branch}:refs/remotes/origin/${branch}`, { "--depth": 1 });

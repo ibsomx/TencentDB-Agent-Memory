@@ -76,6 +76,7 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh /usr/local/bin/smoke-test.sh \
 
 ENV NODE_ENV=production \
     PORT=8421 \
+    HOST="" \
     KNOWLEDGE_DATA_DIR=/app/data \
     KNOWLEDGE_DB_PATH=/app/data/knowledge.db \
     LOG_LEVEL=info

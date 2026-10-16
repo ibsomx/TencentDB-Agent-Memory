@@ -98,7 +98,16 @@ if [[ "${LLM_MODE}" == "proxy" ]]; then
 fi
 
 cd /app/knowledge
-PORT="${KNOWLEDGE_PORT}" LOG_LEVEL="${LOG_LEVEL:-info}" \
+knowledge_host="${HOST:-}"
+knowledge_service_key="${KNOWLEDGE_SERVICE_KEY:-}"
+if [[ -z "$knowledge_host" ]]; then
+  if [[ -n "${knowledge_service_key//[[:space:]]/}" ]]; then
+    knowledge_host=0.0.0.0
+  else
+    knowledge_host=127.0.0.1
+  fi
+fi
+HOST="$knowledge_host" PORT="${KNOWLEDGE_PORT}" LOG_LEVEL="${LOG_LEVEL:-info}" \
   KNOWLEDGE_SERVICE_KEY="${KNOWLEDGE_SERVICE_KEY:-}" \
   node "$(test -f dist/server.js && echo dist/server.js || echo dist/server.mjs)" 2>&1 \
   | tee -a "$KNOWLEDGE_LOG" &

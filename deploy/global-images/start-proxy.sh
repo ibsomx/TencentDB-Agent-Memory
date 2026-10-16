@@ -156,6 +156,8 @@ $DOCKER run -d --name "$CONTAINER" \
   --add-host=host.docker.internal:host-gateway \
   -p "${PROXY_PORT}:8096" \
   -v "$CONFIG_FILE:/data/config.yaml:ro" \
+  -e PROXY_LLM_MODE="${PROXY_LLM_MODE:-custom}" \
+  -e PROXY_LLM_PROVIDER="${PROXY_LLM_PROVIDER:-ollama}" \
   "$PROXY_IMAGE" >/dev/null
 
 wait_healthy "$CONTAINER" 90

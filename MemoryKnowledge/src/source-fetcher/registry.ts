@@ -1,6 +1,7 @@
 import { GitSourceFetcher } from "./git-fetcher.js";
 import { LocalSourceFetcher } from "./local-fetcher.js";
 import type { ISourceFetcher, SourceType } from "./types.js";
+import { isAbsolute } from "node:path";
 
 export class SourceFetcherRegistry {
   private readonly fetchers = new Map<SourceType, ISourceFetcher>();
@@ -32,7 +33,7 @@ export class SourceFetcherRegistry {
     ) {
       return "git";
     }
-    if (url.startsWith("file://") || url.startsWith("/") || url.startsWith("./")) {
+    if (/^file:/i.test(url) || isAbsolute(url) || /^\.{1,2}[\\/]/.test(url)) {
       return "local";
     }
     if (url.startsWith("ftp://")) return "ftp";

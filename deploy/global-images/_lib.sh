@@ -28,6 +28,58 @@ load_env() {
   # shellcheck disable=SC1090
   source "$ENV_FILE"
   set +a
+  apply_local_llm_defaults
+}
+
+# Opt-in local inference. Docker callers reach host models via host.docker.internal.
+# Do not change gateway, user, or Knowledge service authentication keys here.
+apply_local_llm_defaults() {
+  local group mode provider base_var key_var model_var default_base default_model resolved_base
+  for group in MEMORY PROXY; do
+    if [[ "$group" == MEMORY ]]; then
+      mode="${MEMORY_LLM_MODE:-custom}"
+      provider="${MEMORY_LLM_PROVIDER:-ollama}"
+      base_var=MEMORY_LLM_BASE_URL; key_var=MEMORY_LLM_API_KEY; model_var=MEMORY_LLM_MODEL
+    else
+      mode="${PROXY_LLM_MODE:-custom}"
+      provider="${PROXY_LLM_PROVIDER:-ollama}"
+      base_var=PROXY_UPSTREAM_URL; key_var=PROXY_UPSTREAM_API_KEY; model_var=PROXY_UPSTREAM_MODEL
+    fi
+    [[ "$mode" == local ]] || continue
+    case "$provider" in
+      ollama) default_base=http://host.docker.internal:11434/v1; default_model=qwen2.5:7b ;;
+      lmstudio) default_base=http://host.docker.internal:1234/v1; default_model=local-model ;;
+      *) die "$group local provider must be ollama or lmstudio" ;;
+    esac
+    if [[ "$group" == PROXY ]]; then
+      # Claude Code speaks Messages; no translation is performed by this proxy.
+      default_base="${default_base%/v1}"
+      [[ "$provider" != ollama ]] || default_model=qwen3-coder
+      export PROXY_UPSTREAM_PROTOCOL=anthropic
+    fi
+    if [[ -z "${!base_var:-}" || "${!base_var}" == REPLACE_ME ]]; then
+      printf -v "$base_var" '%s' "$default_base"
+    fi
+    if [[ -z "${!key_var:-}" || "${!key_var}" == REPLACE_ME ]]; then
+      if [[ "$group" == PROXY ]]; then
+        printf -v "$key_var" '%s' "$provider"
+      else
+        printf -v "$key_var" '%s' local-no-key
+      fi
+    fi
+    if [[ "$group" == PROXY ]]; then
+      resolved_base="${!base_var}"
+      resolved_base="${resolved_base%/}"
+      printf -v "$base_var" '%s' "${resolved_base%/v1}"
+    fi
+    if [[ -z "${!model_var:-}" || "${!model_var}" == REPLACE_ME ]]; then
+      printf -v "$model_var" '%s' "$default_model"
+    fi
+    export "$base_var" "$key_var" "$model_var"
+  done
+  if [[ "${MEMORY_LLM_MODE:-custom}" == local ]]; then
+    export MEMORY_LLM_PROTOCOL=openai
+  fi
 }
 
 # 校验一组必填变量；缺一个都不启动，一次性列出所有缺失项

@@ -227,10 +227,22 @@ main() {
   export LLM_MODE="${LLM_MODE:-proxy}"
   export LLM_MODEL="${LLM_MODEL:-gpt-4o-mini}"
 
+  # Docker may bind all interfaces only when the service key is nonblank.
+  local service_key="${KNOWLEDGE_SERVICE_KEY:-}"
+  if [[ -z "${HOST:-}" ]]; then
+    if [[ -n "${service_key//[[:space:]]/}" ]]; then
+      export HOST=0.0.0.0
+    else
+      export HOST=127.0.0.1
+      echo "warn: sin KNOWLEDGE_SERVICE_KEY, Knowledge solo escuchará en loopback del contenedor" >&2
+    fi
+  fi
+  # Explicit non-loopback HOST without a key is rejected by server.ts as well.
+
   mkdir -p "$KNOWLEDGE_DATA_DIR"
 
   echo "team-knowledge starting:"
-  echo "  listen:      0.0.0.0:${PORT}"
+  echo "  listen:      ${HOST}:${PORT}"
   echo "  data:        ${KNOWLEDGE_DATA_DIR}"
   echo "  public url:  ${KNOWLEDGE_PUBLIC_BASE_URL}"
   echo "  tmc callback:${TMC_CALLBACK_URL:-<none>}"

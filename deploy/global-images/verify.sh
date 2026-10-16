@@ -188,6 +188,18 @@ if [[ ! -f "$ENV_FILE" ]]; then
 else
   ok ".env 存在"
   set -a; source "$ENV_FILE"; set +a
+  # Same local-only defaults as the launchers, before REPLACE_ME validation.
+  apply_local_llm_defaults
+  MEMORY_CHECK_BASE="${MEMORY_LLM_BASE_URL:-}"
+  PROXY_CHECK_BASE="${PROXY_UPSTREAM_URL:-}"
+  PROXY_CHECK_PROTOCOL=openai
+  if [[ "${MEMORY_LLM_MODE:-custom}" == local ]]; then
+    MEMORY_CHECK_BASE="${MEMORY_CHECK_BASE/http:\/\/host.docker.internal:/http:\/\/localhost:}"
+  fi
+  if [[ "${PROXY_LLM_MODE:-custom}" == local ]]; then
+    PROXY_CHECK_BASE="${PROXY_CHECK_BASE/http:\/\/host.docker.internal:/http:\/\/localhost:}"
+    PROXY_CHECK_PROTOCOL=anthropic
+  fi
 
   # 3. 必填参数
   MISSING=()
@@ -244,7 +256,7 @@ else
     info "═══ LLM 通路检查 ═══════════════════════════════════════"
 
     # memory 组
-    if ! check_llm_group "memory 组" "$MEMORY_LLM_BASE_URL" "$MEMORY_LLM_API_KEY" \
+    if ! check_llm_group "memory 组" "$MEMORY_CHECK_BASE" "$MEMORY_LLM_API_KEY" \
          "$MEMORY_LLM_MODEL" "${MEMORY_LLM_PROTOCOL:-openai}"; then
       ERRORS=$((ERRORS+1))
     fi
@@ -256,16 +268,17 @@ else
     # proxy 组（如果与 memory 组值完全一样，说明用户填的是同一份，只验 1 次即可）
     if [[ "$PROXY_UPSTREAM_URL" == "$MEMORY_LLM_BASE_URL" && \
           "$PROXY_UPSTREAM_API_KEY" == "$MEMORY_LLM_API_KEY" && \
-          "$PROXY_UPSTREAM_MODEL" == "$MEMORY_LLM_MODEL" ]]; then
+          "$PROXY_UPSTREAM_MODEL" == "$MEMORY_LLM_MODEL" && \
+          ( "${PROXY_LLM_MODE:-custom}" != local || "$PROXY_CHECK_PROTOCOL" == "${MEMORY_LLM_PROTOCOL:-openai}" ) ]]; then
       ok "proxy 组 与 memory 组完全相同，跳过重复检查"
     else
-      # proxy 组默认按 openai 协议（与 config.yaml 一致）
-      if ! check_llm_group "proxy 组" "$PROXY_UPSTREAM_URL" "$PROXY_UPSTREAM_API_KEY" \
-           "$PROXY_UPSTREAM_MODEL" openai; then
+      # Remote keeps the original OpenAI check; local Proxy uses Messages.
+      if ! check_llm_group "proxy 组" "$PROXY_CHECK_BASE" "$PROXY_UPSTREAM_API_KEY" \
+           "$PROXY_UPSTREAM_MODEL" "$PROXY_CHECK_PROTOCOL"; then
         ERRORS=$((ERRORS+1))
       fi
       check_llm_from_container tdai-proxy "proxy 组 (from container)" \
-        "$PROXY_UPSTREAM_URL" "$PROXY_UPSTREAM_API_KEY" "$PROXY_UPSTREAM_MODEL" openai
+        "$PROXY_UPSTREAM_URL" "$PROXY_UPSTREAM_API_KEY" "$PROXY_UPSTREAM_MODEL" "$PROXY_CHECK_PROTOCOL"
     fi
   fi
 fi
